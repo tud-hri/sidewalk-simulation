@@ -1,0 +1,1 @@
+Extract the downloaded data here so it can be automatically found by the plotting and replay scripts. This should result the following file structure: sidewalk-simulation\data\simulations\CONDITION_NAME\ITERATION_NUMBER.pkl
