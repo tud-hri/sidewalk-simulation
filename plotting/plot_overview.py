@@ -18,14 +18,14 @@ along with sidewalk-simulation.  If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 
-from plotting.load_data import load_traces_data, load_metrics_data, load_all_data
+from plotting.load_data import load_traces_data, load_metrics_data, load_all_data, load_data_with_multi_processing
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 if __name__ == '__main__':
 
     simulations_folder = os.path.join('..', 'data', 'simulations')
-    metrics, traces = load_all_data(simulations_folder)
+    traces, metrics = load_data_with_multi_processing(simulations_folder, workers=20)
     plt.rcParams["font.family"] = "Century Gothic"
     end_states = metrics.loc[:, ['end_state', 'formatted_condition']].groupby(['formatted_condition', 'end_state'])
     end_states = end_states.size().unstack(fill_value=0)
@@ -35,20 +35,27 @@ if __name__ == '__main__':
     print()
 
     conflicts_per_condition = {}
+    conflict_ids = {}
     end_states_in_non_conflict = []
 
     for condition in metrics['condition'].unique():
         number_of_conflicts = 0
+        conflict_iterations = []
         for iteration in range(100):
             sim_metrics = metrics.loc[(metrics['condition'] == condition) & (metrics['iteration'] == iteration)]
             if (sim_metrics['strategy_switches'].to_numpy() >= 2).all():
                 number_of_conflicts += 1
+                conflict_iterations.append(iteration)
             else:
                 end_states_in_non_conflict.append(sim_metrics['end_state'].iat[0])
 
         conflicts_per_condition[condition] = number_of_conflicts
+        conflict_ids[condition] = conflict_iterations
 
     print(conflicts_per_condition)
+    print()
+    print(conflict_ids)
+    print()
 
     traces['-x'] = -traces['x']
 
@@ -109,7 +116,7 @@ if __name__ == '__main__':
     for condition_index, condition in enumerate(conditions_order):
         ax = axes[condition_index]
         ax.set_aspect('equal')
-        condition_data = traces.loc[traces['condition'] == condition]
+        condition_data = traces.loc[(traces['condition'] == condition) & (traces['end_state'] == 'Finished')]
         sns.lineplot(condition_data, x='y', y='-x', c='lightgrey', units='id', estimator=None, ax=ax, sort=False,
                      linewidth=0.3)
         sns.lineplot(condition_data.loc[~condition_data['passed_each_other']], x='y', y='-x', hue='iteration',

@@ -20,7 +20,7 @@ import numpy as np
 
 from PyQt5 import QtCore
 
-from agents import PedestrianCEIAgent
+from agents import PedestrianCEIAgentPedestrianDynamics
 from agents.agent import Agent
 from controllableobjects.controlableobject import ControllableObject
 from simulation.abstractsimmaster import AbstractSimMaster
@@ -81,7 +81,7 @@ class SimMaster(AbstractSimMaster):
         self._controllable_objects[key] = controllable_object
         self._agents[key] = agent
         self.agent_types[key] = type(agent)
-        if type(agent) is PedestrianCEIAgent:
+        if type(agent) is PedestrianCEIAgentPedestrianDynamics:
             self.risk_bounds[key] = agent.risk_threshold
 
         self.velocity_history[key] = [controllable_object.velocity] * self.history_length
@@ -108,15 +108,15 @@ class SimMaster(AbstractSimMaster):
 
     def do_time_step(self, reverse=False):
 
-        for controllable_object, tag in zip(self._controllable_objects.values(), self._agents.values()):
+        for controllable_object, agent in zip(self._controllable_objects.values(), self._agents.values()):
             if controllable_object.use_discrete_inputs:
-                controllable_object.set_discrete_input(tag.compute_discrete_input(self.dt / 1000.0))
+                controllable_object.set_discrete_input(agent.compute_discrete_input(self.dt / 1000.0))
             else:
-                controllable_object.set_continuous_input(tag.compute_continuous_input(self.dt / 1000.0))
+                controllable_object.set_continuous_input(agent.compute_continuous_input(self.dt / 1000.0))
 
         # This for loop over agents is done twice because the models that compute the new input need the current state of other vehicles.
         # So plan first for all vehicles before applying the accelerations and calculating the new state
-        for controllable_object, tag in zip(self._controllable_objects.values(), self._agents.values()):
+        for controllable_object, agent in zip(self._controllable_objects.values(), self._agents.values()):
             controllable_object.update_model(self.dt / 1000.0)
 
             if self._track.is_beyond_track_bounds(controllable_object.position):
@@ -139,10 +139,11 @@ class SimMaster(AbstractSimMaster):
         self._update_history()
         self.gui.update_all_graphics()
 
-        for tag in [0, 1]:
+        for agent in [0, 1]:
             try:
-                agent = self._agents[tag]
-                self.gui.update_plots(tag, agent.belief, agent.belief_time_stamps, agent.position_plan)
+                cei_agent = self._agents[agent]
+                if isinstance(self.gui, SimulationGui) and type(cei_agent) in [PedestrianCEIAgentPedestrianDynamics]:
+                    self.gui.update_plots(agent, cei_agent.belief, cei_agent.belief_time_stamps, cei_agent.position_plan)
             except KeyError:
                 pass # the agent does not exist in this simulation
 

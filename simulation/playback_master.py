@@ -18,7 +18,7 @@ along with sidewalk-simulation.  If not, see <https://www.gnu.org/licenses/>.
 """
 import numpy as np
 
-from agents import PedestrianCEIAgent
+from agents import PedestrianCEIAgentPedestrianDynamics
 from controllableobjects.controlableobject import ControllableObject
 from simulation.simmaster import SimMaster
 

@@ -17,13 +17,13 @@ You should have received a copy of the GNU General Public License
 along with sidewalk-simulation.  If not, see <https://www.gnu.org/licenses/>.
 """
 import copy
-import warnings
 
 import numpy as np
 import casadi
 
-from controllableobjects import BicycleModelObject
+from controllableobjects import PedestrianObject
 from .agent import Agent
+from colorama import Fore, Style
 
 
 class BeliefPoint:
@@ -77,14 +77,14 @@ class BeliefPoint:
         return x, p
 
 
-class PedestrianCEIAgent(Agent):
+class PedestrianCEIAgentPedestrianDynamics(Agent):
     """
     An agent used in a Communication-Enabled Interaction pedestrian model.
     """
 
-    def __init__(self, controllable_object: BicycleModelObject, dt, sim_master, track, risk_threshold, time_horizon,
+    def __init__(self, controllable_object: PedestrianObject, dt, sim_master, track, risk_threshold, time_horizon,
                  planning_frequency, preferred_velocity, preferred_heading, comfortable_range, opponent_id,
-                 expected_lateral_acceleration=0.1, cultural_bias=1.):
+                 expected_lateral_acceleration=0.2, cultural_bias=1.):
         self.controllable_object = controllable_object
         self.dt = dt
         simulation_frequency = int(1000 / dt)
@@ -100,15 +100,15 @@ class PedestrianCEIAgent(Agent):
         self.comfortable_range = comfortable_range
         self.expected_lateral_acceleration = expected_lateral_acceleration
         self.opponent_id = opponent_id
-        self.perception_update_rate = (1 / simulation_frequency) * 0.25
+        self.perception_update_rate = 1 / (simulation_frequency * 0.5)
         self.cultural_bias = cultural_bias  # 1.0 means no bias; >1 is percentual bias to the right; <1 to the left
 
         # the action plan consists of the action (constant acceleration) to take at the coming time steps. The position plan is the set of positions along the
         # track where the ego vehicle will end up when taking these actions.
         self.plan_length = int((1000 / dt) * time_horizon)
-        self.action_plan = np.array([[0.0, 0.]] * self.plan_length)
+        self.action_plan = np.array([[0.0, 0., 0.]] * self.plan_length)
         self.heading_plan = np.array([0.0] * self.plan_length)
-        self.velocity_plan = np.array([0.0] * self.plan_length)
+        self.velocity_plan = np.array([[0.0, 0., 0.]] * self.plan_length)
         self.position_plan = np.array([[0.0, 0.]] * self.plan_length)
         self.action_bounds = [-1, 1]
 
@@ -119,52 +119,61 @@ class PedestrianCEIAgent(Agent):
             self.belief.append(BeliefPoint())
             self.belief_time_stamps.append((1 / self.planning_frequency) * (belief_index + 1))
 
+        self.casadi_belief = None
         self.did_plan_update_on_last_tick = 0
         self.perceived_risk = 0.
+        self.collision_risk = 0.
+        self.side_risk = 0.
 
-        # The observed communication is the current position, velocity, and acceleration of the other vehicle
+        # The observed communication is the current position, velocity, and acceleration of the other pedestrian
         self.observed_position = [0.0, 0.0]
-        self.observed_velocity = self.controllable_object.initial_velocity
-        self.observed_heading = -self.controllable_object.initial_heading
+        self.observed_long_velocity = self.controllable_object.initial_velocity[0]
+        self.observed_lat_velocity = self.controllable_object.initial_velocity[1]
+        self.observed_heading = -self.controllable_object.heading
 
         self._is_initialized = False
         self._initialize_optimization()
 
     def reset(self):
-        # the action plan consists of the action (constant acceleration) to take at the coming time steps. The position plan is the set of positions along the
-        # track where the ego vehicle will end up when taking these actions.
-        self.action_plan = np.array([[0.0, 0.]] * self.plan_length)
+        self.action_plan = np.array([[0.0, 0., 0.]] * self.plan_length)
         self.heading_plan = np.array([0.0] * self.plan_length)
-        self.velocity_plan = np.array([0.0] * self.plan_length)
+        self.velocity_plan = np.array([0.0, 0.] * self.plan_length)
         self.position_plan = np.array([[0.0, 0.]] * self.plan_length)
 
-        # the belief consists of sets of a mean and standard deviation for a distribution over positions at every time step.
         self.belief = []
         self.belief_time_stamps = []
         for belief_index in range(int(self.planning_frequency * self.time_horizon)):
-            self.belief.append([0., 0.])
+            self.belief.append(BeliefPoint())
+            self.belief_time_stamps.append((1 / self.planning_frequency) * (belief_index + 1))
 
+        self.casadi_belief = None
         self.did_plan_update_on_last_tick = 0
         self.perceived_risk = 0.
 
-        # The observed communication is the current position, velocity, and acceleration of the other vehicle
         self.observed_position = [0.0, 0.0]
-        self.observed_velocity = self.controllable_object.initial_velocity
-        self.observed_heading = -self.controllable_object.initial_heading
+        self.observed_long_velocity = self.controllable_object.initial_velocity[0]
+        self.observed_lat_velocity = self.controllable_object.initial_velocity[1]
+        self.observed_heading = -self.controllable_object.heading
 
         self._is_initialized = False
         self._initialize_optimization()
 
     def _observe_communication(self):
         other_position, other_velocity, other_heading = self.sim_master.get_current_state(self.opponent_id)
+        other_long_velocity = other_velocity[0]
+        other_lat_velocity = other_velocity[1]
+
         self.observed_position = other_position
 
-        noise = np.random.normal(scale=np.sqrt(self.dt / 1000.)) * 0.02
-        velocity_update = self.perception_update_rate * (other_velocity - self.observed_velocity) + noise
+        noise = np.random.normal(scale=np.sqrt(self.dt / 1000.)) * 0.03
+        long_velocity_update = self.perception_update_rate * (other_long_velocity - self.observed_long_velocity) + noise
+        self.observed_long_velocity = max(self.observed_long_velocity + long_velocity_update, 0.0)
 
-        self.observed_velocity = self.observed_velocity + velocity_update
+        noise = np.random.normal(scale=np.sqrt(self.dt / 1000.)) * 0.03
+        lat_velocity_update = self.perception_update_rate * (other_lat_velocity - self.observed_lat_velocity) + noise
+        self.observed_lat_velocity = self.observed_lat_velocity + lat_velocity_update
 
-        noise = np.random.normal(scale=np.sqrt(self.dt / 1000.)) * 0.02
+        noise = np.random.normal(scale=np.sqrt(self.dt / 1000.)) * 0.03
         heading_update = self.perception_update_rate * (other_heading - self.observed_heading) + noise
         self.observed_heading = self.observed_heading + heading_update
 
@@ -175,20 +184,11 @@ class PedestrianCEIAgent(Agent):
 
         # Initialize decision variables and parameters
         self.optimizer = casadi.Opti()
-        self.x = self.optimizer.variable(4, N + 1)  # The state [x, y, v, heading] x N
-        self.u = self.optimizer.variable(2, N)  # The control input [a, phi] (acceleration, steering angle) x N
+        self.x = self.optimizer.variable(6, N + 1)  # The state [x, y, v_long, v_lat, v_rotation, heading] x N
+        self.u = self.optimizer.variable(3, N)  # The control input [a_long, a_lat, omega_dot] (acceleration) x N
         total_cost = 0
         self.risk_bound_agent = self.optimizer.parameter()
-
-        # Save to evaluate later on
-        self.casadi_belief = []  #
-        self.inequality = []
-
-        self.plan_side_risk = 0.
-        for i in range(N + 1):
-            self.plan_side_risk += self._get_side_risk_for_individual_point(self.x[0:2, i], self.track.track_width)
-
-        self.plan_side_risk /= (N + 1)
+        self.casadi_belief = []
 
         for i in range(N):
             # Dynamics, use as equality constraint
@@ -199,7 +199,7 @@ class PedestrianCEIAgent(Agent):
             self.optimizer.subject_to(self.x[:, i + 1] == x_new)
 
             # Cost evaluation
-            total_cost += self._cost_function_casadi(x_new, u_now)
+            total_cost += self._cost_function_casadi(x_new, u_now, self.preferred_velocity, self.preferred_heading)
 
             # Inequality constraints
             belief_point = [self.optimizer.parameter(), self.optimizer.parameter(), self.optimizer.parameter(),
@@ -207,13 +207,14 @@ class PedestrianCEIAgent(Agent):
                             self.optimizer.parameter(), self.optimizer.parameter(), self.optimizer.parameter(),
                             self.optimizer.parameter()]
 
-            inequality_constraint = (self._get_belief_probability(belief_point, x_new[0:2], self.comfortable_range)
-                                     + self.plan_side_risk - self.risk_bound_agent)
-            self.optimizer.subject_to(inequality_constraint <= 0)
-
-            # Save for later evaluation
             self.casadi_belief.append(belief_point)
-            self.inequality.append(inequality_constraint)
+
+            collision_risk = self._get_belief_probability(belief_point, x_new[0:2], self.comfortable_range)
+            side_risk = self._get_side_risk_for_individual_point(x_new[0:2], self.track.track_width, (1 / self.planning_frequency) * (i + 1),
+                                                                 self.time_horizon)
+            total_risk = collision_risk + side_risk
+
+            self.optimizer.subject_to(total_risk <= self.risk_bound_agent)
 
         # Set bounds
         self.optimizer.subject_to(self.u[:] >= self.action_bounds[0])
@@ -221,6 +222,7 @@ class PedestrianCEIAgent(Agent):
 
         # Set initial x
         self.x_initial = casadi.vertcat(self.optimizer.parameter(), self.optimizer.parameter(),
+                                        self.optimizer.parameter(), self.optimizer.parameter(),
                                         self.optimizer.parameter(), self.optimizer.parameter())
         self.optimizer.subject_to(self.x[:, 0] == self.x_initial)
 
@@ -231,7 +233,7 @@ class PedestrianCEIAgent(Agent):
     def _get_belief_probability(belief_point, plan_point, comfortable_range):
 
         dy = (belief_point[9] - plan_point[1])
-        dy_weight = casadi.exp(-dy**2 / (2*comfortable_range) ** 2)
+        dy_weight = casadi.exp(-dy ** 2 / (2 * comfortable_range) ** 2)
         bound = comfortable_range
 
         ub = plan_point[0] + bound
@@ -250,88 +252,96 @@ class PedestrianCEIAgent(Agent):
         return p
 
     @staticmethod
-    def _get_side_risk_for_individual_point(plan_point, sidewalk_width):
+    def _get_side_risk_for_individual_point(plan_point, sidewalk_width, d_t, planning_horizon):
         x = plan_point[0]
 
         edge = sidewalk_width / 2.
         r = 1 - casadi.tanh(10 * (x + edge - 0.15)) / 2 + casadi.tanh(10 * (x - edge + 0.15)) / 2
+        r *= casadi.exp(-d_t / planning_horizon)
         return r
 
-    def _dynamics_casadi(self, state, u):
+    def _dynamics_casadi(self, state, u, dt=None):
+        if not dt:
+            dt = 1 / self.planning_frequency
         # Equality constraints for the optimization
-        alpha = self.controllable_object.resistance_coefficient
-        beta = self.controllable_object.constant_resistance
-        dt = 1 / self.planning_frequency
+        a_long = u[0]
+        a_lat = u[1]
+        omega_dot = u[2]
 
         x = state[0]
         y = state[1]
-        v = state[2]
-        heading = state[3]
+        v_long = state[2]
+        v_lat = state[3]
+        v_angular = state[4]
+        heading = state[5]
 
-        steer_angle = u[1] * self.controllable_object.max_steering_angle
-        a_input = u[0] * self.controllable_object.max_acceleration
+        a_long *= self.controllable_object.max_long_acceleration
+        a_lat *= self.controllable_object.max_lat_acceleration
+        omega_dot *= self.controllable_object.max_angular_acceleration
 
-        a = a_input - alpha * v ** 2 - beta
+        x_dot = v_long * np.cos(heading) - v_lat * np.sin(heading)
+        y_dot = v_long * np.sin(heading) + v_lat * np.cos(heading)
 
-        slip_angle = casadi.arctan(casadi.tan(steer_angle) / 2.)  # also beta in some references
+        x_dot_dot = a_long * np.cos(heading) - a_lat * np.sin(heading)
+        y_dot_dot = a_long * np.sin(heading) + a_lat * np.cos(heading)
 
-        x_dot = v * casadi.cos(heading + slip_angle)
-        y_dot = v * casadi.sin(heading + slip_angle)
-        a_x = a * casadi.cos(heading + slip_angle)
-        a_y = a * casadi.sin(heading + slip_angle)
-        turning_rate = (v / (.5 * self.controllable_object.wheelbase)) * casadi.sin(slip_angle)
+        new_x = x + x_dot * dt + .5 * x_dot_dot * dt ** 2
+        new_y = y + y_dot * dt + .5 * y_dot_dot * dt ** 2
+        new_heading = heading + v_angular * dt + 0.5 * omega_dot * dt ** 2
+        new_v_long = v_long + a_long * dt
+        new_v_lat = v_lat + a_lat * dt
+        new_v_angular = v_angular + omega_dot * dt
 
-        new_x = x + x_dot * dt + .5 * a_x * dt ** 2
-        new_y = y + y_dot * dt + .5 * a_y * dt ** 2
-        new_heading = heading + turning_rate * dt
-        new_v = v + a * dt
+        return casadi.vertcat(new_x, new_y, new_v_long, new_v_lat, new_v_angular, new_heading)
 
-        return casadi.vertcat(new_x, new_y, new_v, new_heading)
-
-    def _cost_function_casadi(self, x, u):
+    def _cost_function_casadi(self, x, u, desired_velocity, desired_heading):
         # Cost function for the optimization
-        desired_velocity = self.preferred_velocity
-        desired_direction = casadi.sin(self.preferred_heading)
-        desired_heading = self.preferred_heading
-        steer_angle = u[1] * self.controllable_object.max_steering_angle
-        a_input = u[0] * self.controllable_object.max_acceleration
+        a_long = u[0]
+        a_lat = u[1]
+        omega_dot = u[2]
 
-        v = x[2]
-        heading = x[3]
+        v_long = x[2]
+        v_lat = x[3]
+        heading = x[5]
 
-        alpha = self.controllable_object.resistance_coefficient
-        beta = self.controllable_object.constant_resistance
-        net_acceleration = a_input - alpha * v ** 2 - beta
+        v_diff = (v_long - desired_velocity)
+        sigmoid = .5 + casadi.tanh(100 * v_long) / 2.
+        # v_diff_positive = sigmoid * v_diff
+        v_negative = (1 - sigmoid) * v_long
 
-        v_diff = (v - desired_velocity)
-        sigmoid = .5 + casadi.tanh(100 * v_diff) / 2.
-        v_diff_positive = sigmoid * v_diff
-        v_diff_negative = (1 - sigmoid) * v_diff
-
-        return (v_diff_positive ** 2 +
-                0.1 * v_diff_negative ** 2 +
-                2 * (heading - desired_heading) ** 2 +
-                steer_angle ** 2 +
-                0.1 * net_acceleration ** 2)
+        return (v_diff ** 2 +
+                2. * v_lat ** 2 +
+                100. * v_negative ** 2 +
+                5. * (heading - desired_heading) ** 2 +
+                1. * omega_dot ** 2 +
+                1. * a_long ** 2 +
+                1. * a_lat ** 2)
 
     def _update_belief(self):
         direction = np.sign(self.preferred_heading)
         track_left_x = -1 * direction * self.track.track_width / 2.
 
+        ego_effect_weight = 0.5
+
+        other_x = self.observed_position[0]
+        other_y = self.observed_position[1]
+
+        left_p = ((np.atan2((other_y - self.controllable_object.position[1]) / 4,
+                            (other_x - self.controllable_object.position[0])) - self.preferred_heading) / np.pi) + 0.5
+        left_p -= min(1.0, max(-1.0, self.observed_lat_velocity))
+
+        left_p = min(1.0, max(0.0, left_p))
+        right_p = 1. - left_p
+
         for belief_index, t in enumerate(self.belief_time_stamps):
             belief_point = self.belief[belief_index]
-            belief_point.y = self.observed_position[1] + np.sin(self.observed_heading) * self.observed_velocity * t
+            belief_point.y = self.observed_position[1] + np.sin(self.observed_heading) * self.observed_long_velocity * t
 
-            ego_effect_weight = 0.5
-
-            other_extrapolated_x = self.observed_position[0] + np.cos(self.observed_heading) * self.observed_velocity * t
-            other_x = self.observed_position[0]
-            space_left_side_of_other = abs(track_left_x - other_x)
-            space_right_side_of_other = self.track.track_width - space_left_side_of_other
+            other_extrapolated_x = self.observed_position[0] + (
+                    np.cos(self.observed_heading) * self.observed_long_velocity - np.sin(self.observed_heading) * self.observed_lat_velocity) * t
 
             if direction * (other_extrapolated_x - self.controllable_object.position[0]) < - self.comfortable_range:
                 belief_point.passing_left_mu = other_extrapolated_x
-
             else:
                 belief_point.passing_left_mu = self.controllable_object.position[0] - direction * self.comfortable_range
 
@@ -339,7 +349,7 @@ class PedestrianCEIAgent(Agent):
             belief_point.passing_left_sigma = (space_on_my_left - self.comfortable_range) / 6.
             belief_point.passing_left_weight = (ego_effect_weight *
                                                 (2. - self.cultural_bias) *
-                                                (space_right_side_of_other / self.track.track_width))
+                                                left_p)
 
             if direction * (other_extrapolated_x - self.controllable_object.position[0]) > self.comfortable_range:
                 belief_point.passing_right_mu = other_extrapolated_x
@@ -350,45 +360,53 @@ class PedestrianCEIAgent(Agent):
             belief_point.passing_right_sigma = (space_on_my_right - self.comfortable_range) / 6.
             belief_point.passing_right_weight = (ego_effect_weight *
                                                  self.cultural_bias *
-                                                 (space_left_side_of_other / self.track.track_width))
+                                                 right_p)
 
             belief_point.current_heading_mu = other_extrapolated_x
             belief_point.current_heading_sigma = .5 * t ** 2 * (self.expected_lateral_acceleration / 3)
             belief_point.current_heading_weight = 1 - ego_effect_weight
 
     def _evaluate_risk(self):
-        collision, _ = self._get_collision_probabilities(self.belief, self.position_plan)
-        side_risk = self._get_side_risk(self.position_plan)
-        risk = collision + side_risk
+        collision_risks = self._get_collision_probabilities(self.belief, self.position_plan)
+        side_risks = self._get_side_risk(self.position_plan)
 
-        return risk
+        risks = np.array(collision_risks) + np.array(side_risks)[self.planning_simulation_ratio - 1::self.planning_simulation_ratio]
+        max_risk = np.amax(risks)
+        max_risk_index = np.argmax(risks)
+
+        self.collision_risk = collision_risks[max_risk_index]
+        self.side_risk = side_risks[self.planning_simulation_ratio - 1::self.planning_simulation_ratio][max_risk_index]
+
+        return max_risk
 
     def _get_collision_probabilities(self, belief, position_plan):
         probabilities_over_plan = []
 
         for belief_index, belief_point in enumerate(belief):
-            plan_point = position_plan[belief_index]
+            plan_point = position_plan[self.planning_simulation_ratio - 1::self.planning_simulation_ratio][belief_index]
 
             collision_probability = self._get_belief_probability(belief_point.as_list(), plan_point, self.comfortable_range)
             probabilities_over_plan += [collision_probability]
 
-        return np.amax(probabilities_over_plan), probabilities_over_plan
+        return probabilities_over_plan
 
     def _get_side_risk(self, position_plan):
-        side_risk = 0
+        side_risk = []
 
-        for plan_point in position_plan:
-            side_risk += self._get_side_risk_for_individual_point(plan_point, self.track.track_width)
-
-        side_risk /= len(position_plan)
+        for plan_index, plan_point in enumerate(position_plan):
+            side_risk.append(self._get_side_risk_for_individual_point(plan_point, self.track.track_width, (self.dt / 1000) * (plan_index + 1),
+                                                                      self.time_horizon))
 
         return side_risk
 
     def _update_plan(self, constraint_risk_bound):
         # Set initial values
+        # The state [x, y, v_long, v_lat, v_rotation, heading] x N
         initial_state = casadi.vertcat(self.controllable_object.position[0],
                                        self.controllable_object.position[1],
-                                       self.controllable_object.velocity,
+                                       self.controllable_object.velocity[0],
+                                       self.controllable_object.velocity[1],
+                                       self.controllable_object.angular_velocity,
                                        self.controllable_object.heading)
         self.optimizer.set_value(self.x_initial, initial_state)
 
@@ -396,8 +414,8 @@ class PedestrianCEIAgent(Agent):
         self.optimizer.set_initial(self.x[:, 0], initial_state)
         plan_indices_for_belief = (np.array(self.belief_time_stamps) / (self.dt / 1000)).astype(int) - 1
         self.optimizer.set_initial(self.x[0:2, 1:], self.position_plan[plan_indices_for_belief].T)
-        self.optimizer.set_initial(self.x[2, 1:], self.velocity_plan[plan_indices_for_belief])
-        self.optimizer.set_initial(self.x[3, 1:], self.heading_plan[plan_indices_for_belief])
+        self.optimizer.set_initial(self.x[2:5, 1:], self.velocity_plan[plan_indices_for_belief].T)
+        self.optimizer.set_initial(self.x[5, 1:], self.heading_plan[plan_indices_for_belief].T)
 
         self.optimizer.set_initial(self.u, self.action_plan[::self.planning_simulation_ratio].T)
 
@@ -412,22 +430,38 @@ class PedestrianCEIAgent(Agent):
         self.optimizer.set_value(self.risk_bound_agent, constraint_risk_bound)
 
         # Solver options
-        p_opts = {"expand": True, 'ipopt.print_level': 0, 'print_time': 0}
-        s_opts = {"max_iter": 20, "gamma_theta": 0.1, "constr_viol_tol": 1e-8}
-        self.optimizer.solver("ipopt", p_opts, s_opts)
+        p_opts = {"expand": True, 'ipopt.print_level': 0, 'print_time': 0,
+                  "ipopt.max_iter": 3000,
+                  "ipopt.nlp_scaling_method": "none",
+                  "ipopt.dual_inf_tol": 100,
+                  "ipopt.bound_relax_factor": 0.01,
+                  "ipopt.compl_inf_tol": 0.1,
+                  "ipopt.constr_viol_tol": 0.01,
+                  "ipopt.acceptable_constr_viol_tol": 1.,
+                  }
 
-        # Solve, if not feasible, still take solution
+        self.optimizer.solver("ipopt", p_opts)
+
         try:
             solution = self.optimizer.solve()
             self.action_plan = np.repeat(solution.value(self.u).T, self.planning_simulation_ratio, axis=0)
+            self._update_position_plan()
 
         except RuntimeError as e:
-            warnings.warn("Optimization failed produced RuntimeError: ")
-            print(e)
+            print(str(e))
+            print(Fore.GREEN + " Optimization failed produced RuntimeError" + Style.RESET_ALL)
+            print(self.optimizer.stats()['return_status'])
             self.optimization_failed = True
-            self.action_plan = np.array([[-1.0, 0.]] * self.plan_length)
 
-        self._update_position_plan()
+            self.action_plan[:, :] = 0
+            planning_frequency = int((1000 / self.dt) / 2)
+            self.action_plan[0:planning_frequency][:, 2] = -self.controllable_object.angular_velocity * 2
+            self.action_plan[0:planning_frequency][:, 0:2] = -self.controllable_object.velocity * 2
+            self.action_plan[0:planning_frequency] /= np.array(
+                [self.controllable_object.max_long_acceleration, self.controllable_object.max_lat_acceleration,
+                 self.controllable_object.max_angular_acceleration])
+            self._update_position_plan()
+            print(Fore.MAGENTA + '--- reset done ---' + Style.RESET_ALL)
 
     def _update_position_plan(self):
         """
@@ -437,36 +471,33 @@ class PedestrianCEIAgent(Agent):
         """
         previous_position = copy.copy(self.controllable_object.position)
         previous_velocity = copy.copy(self.controllable_object.velocity)
+        previous_angular_velocity = copy.copy(self.controllable_object.angular_velocity)
         previous_heading = copy.copy(self.controllable_object.heading)
 
         for index in range(self.plan_length):
-            current_input = self.action_plan[index, :]
+            a_long, a_lat, omega_dot = self.action_plan[index, :]
 
-            acceleration = current_input[0] * self.controllable_object.max_acceleration
-            steering_angle = current_input[1] * self.controllable_object.max_steering_angle
+            a_long *= self.controllable_object.max_long_acceleration
+            a_lat *= self.controllable_object.max_lat_acceleration
+            omega_dot *= self.controllable_object.max_angular_acceleration
 
-            new_state = self.controllable_object.calculate_time_step_2d(self.dt / 1000.,
-                                                                        previous_position,
-                                                                        previous_velocity,
-                                                                        previous_heading,
-                                                                        acceleration,
-                                                                        steering_angle=steering_angle,
-                                                                        wheelbase=self.controllable_object.wheelbase,
-                                                                        resistance_coefficient=self.controllable_object.resistance_coefficient,
-                                                                        constant_resistance=self.controllable_object.constant_resistance)
-
-            previous_position, previous_velocity, previous_heading = new_state
+            previous_position, previous_velocity, previous_angular_velocity, previous_heading = self.controllable_object.calculate_time_step_2d(
+                self.dt / 1000.,
+                previous_position,
+                previous_velocity,
+                previous_heading,
+                previous_angular_velocity,
+                a_long,
+                a_lat,
+                omega_dot)
 
             self.heading_plan[index] = previous_heading
-            self.velocity_plan[index] = previous_velocity
+            self.velocity_plan[index, :] = [*previous_velocity, previous_angular_velocity]
             self.position_plan[index, :] = previous_position
 
     def _continue_current_plan(self):
         self.action_plan = np.roll(self.action_plan, -1, axis=0)
         self.action_plan[-1, :] = self.action_plan[-2, :]
-
-    def _convert_plan_to_communicative_action(self):
-        pass
 
     def compute_discrete_input(self, dt):
         pass
@@ -489,11 +520,11 @@ class PedestrianCEIAgent(Agent):
             if self.optimization_failed:
                 self.optimization_failed = False
                 self.did_plan_update_on_last_tick = 3
-                self._update_plan(constraint_risk_bound=0.8 * self.risk_threshold)
+                self._update_plan(constraint_risk_bound=0.9 * self.risk_threshold)
                 self.perceived_risk = self._evaluate_risk()
             elif self.perceived_risk > self.risk_threshold:
                 self.did_plan_update_on_last_tick = 1
-                self._update_plan(constraint_risk_bound=0.5 * self.risk_threshold)
+                self._update_plan(constraint_risk_bound=0.75 * self.risk_threshold)
                 self.perceived_risk = self._evaluate_risk()
             else:
                 self.did_plan_update_on_last_tick = 0

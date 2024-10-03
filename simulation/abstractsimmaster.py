@@ -25,8 +25,8 @@ import pickle
 import numpy as np
 import scipy.io
 
-from agents import PedestrianCEIAgent
-from controllableobjects import BicycleModelObject
+from agents import PedestrianCEIAgentPedestrianDynamics
+from controllableobjects import PedestrianObject
 from simulation.simulationconstants import SimulationConstants
 
 
@@ -55,7 +55,10 @@ class AbstractSimMaster(abc.ABC):
         # dicts for saving to file and a list that contains all attributes of the sim master object that will be saved
         self.beliefs = {}
         self.observed_velocities = {}
+        self.observed_headings = {}
         self.perceived_risks = {}
+        self.side_risks = {}
+        self.collision_risks = {}
         self.is_replanning = {}
         self.position_plans = {}
         self.action_plans = {}
@@ -71,7 +74,7 @@ class AbstractSimMaster(abc.ABC):
         self.risk_bounds = {}
 
         self._attributes_to_save = ['dt', 'max_time', 'simulation_constants', 'agent_types', 'end_state',
-                                    'beliefs', 'observed_velocities', 'perceived_risks', 'is_replanning', 'position_plans', 'action_plans', 'positions',
+                                    'beliefs', 'observed_velocities', 'observed_headings', 'perceived_risks', 'side_risks', 'collision_risks', 'is_replanning', 'position_plans', 'action_plans', 'positions',
                                     'raw_input', 'velocities', 'headings', 'steering_angles', 'accelerations', 'net_accelerations', 'belief_time_stamps',
                                     'belief_point_contributing_to_risk', 'risk_bounds']
 
@@ -82,7 +85,10 @@ class AbstractSimMaster(abc.ABC):
 
         self.beliefs = {}
         self.observed_velocities = {}
+        self.observed_headings = {}
         self.perceived_risks = {}
+        self.side_risks = {}
+        self.collision_risks = {}
         self.is_replanning = {}
         self.position_plans = {}
         self.action_plans = {}
@@ -98,8 +104,8 @@ class AbstractSimMaster(abc.ABC):
         self.risk_bounds = {}
 
         self._attributes_to_save = ['dt', 'max_time', 'simulation_constants', 'vehicle_width', 'vehicle_length', 'agent_types', 'end_state',
-                                    'beliefs', 'observed_velocities', 'perceived_risks', 'is_replanning', 'position_plans', 'action_plans', 'positions',
-                                     'raw_input', 'velocities', 'headings', 'steering_angles', 'accelerations', 'net_accelerations', 'belief_time_stamps',
+                                    'beliefs', 'observed_velocities', 'observed_headings', 'perceived_risks', 'side_risks', 'collision_risks', 'is_replanning', 'position_plans', 'action_plans', 'positions',
+                                    'raw_input', 'velocities', 'headings', 'steering_angles', 'accelerations', 'net_accelerations', 'belief_time_stamps',
                                     'belief_point_contributing_to_risk', 'risk_bounds']
 
         number_of_time_steps = int(self.simulation_constants.max_time / self.simulation_constants.dt)
@@ -109,6 +115,8 @@ class AbstractSimMaster(abc.ABC):
             self.position_plans[key] = [None] * number_of_time_steps
             self.action_plans[key] = [None] * number_of_time_steps
             self.perceived_risks[key] = [None] * number_of_time_steps
+            self.side_risks[key] = [None] * number_of_time_steps
+            self.collision_risks[key] = [None] * number_of_time_steps
             self.is_replanning[key] = [None] * number_of_time_steps
             self.positions[key] = [None] * number_of_time_steps
             self.raw_input[key] = [None] * number_of_time_steps
@@ -133,9 +141,12 @@ class AbstractSimMaster(abc.ABC):
         number_of_time_steps = int(self.simulation_constants.max_time / self.simulation_constants.dt) + 1
         self.beliefs[key] = [None] * number_of_time_steps
         self.observed_velocities[key] = [None] * number_of_time_steps
+        self.observed_headings[key] = [None] * number_of_time_steps
         self.position_plans[key] = [None] * number_of_time_steps
         self.action_plans[key] = [None] * number_of_time_steps
         self.perceived_risks[key] = [None] * number_of_time_steps
+        self.side_risks[key] = [None] * number_of_time_steps
+        self.collision_risks[key] = [None] * number_of_time_steps
         self.is_replanning[key] = [None] * number_of_time_steps
         self.positions[key] = [None] * number_of_time_steps
         self.raw_input[key] = [None] * number_of_time_steps
@@ -163,12 +174,15 @@ class AbstractSimMaster(abc.ABC):
 
     def _store_current_status(self):
         for key in self._agents.keys():
-            if self.agent_types[key] is PedestrianCEIAgent:
+            if self.agent_types[key] is PedestrianCEIAgentPedestrianDynamics:
                 self.beliefs[key][self.time_index] = copy.deepcopy(self._agents[key].belief)
-                self.observed_velocities[key][self.time_index] = self._agents[key].observed_velocity
+                self.observed_velocities[key][self.time_index] = [self._agents[key].observed_long_velocity, self._agents[key].observed_lat_velocity]
+                self.observed_headings[key][self.time_index] = self._agents[key].observed_heading
                 self.action_plans[key][self.time_index] = copy.deepcopy(self._agents[key].action_plan)
                 self.position_plans[key][self.time_index] = copy.deepcopy(self._agents[key].position_plan)
                 self.perceived_risks[key][self.time_index] = copy.deepcopy(self._agents[key].perceived_risk)
+                self.side_risks[key][self.time_index] = copy.deepcopy(self._agents[key].side_risk)
+                self.collision_risks[key][self.time_index] = copy.deepcopy(self._agents[key].collision_risk)
                 self.is_replanning[key][self.time_index] = copy.deepcopy(self._agents[key].did_plan_update_on_last_tick)
                 self.belief_time_stamps[key][self.time_index] = copy.deepcopy(self._agents[key].belief_time_stamps)
                 try:
@@ -179,15 +193,17 @@ class AbstractSimMaster(abc.ABC):
             self.positions[key][self.time_index] = self._controllable_objects[key].position
             self.velocities[key][self.time_index] = self._controllable_objects[key].velocity
             self.accelerations[key][self.time_index] = self._controllable_objects[key].acceleration
-            self.net_accelerations[key][self.time_index] = self._controllable_objects[key].acceleration - self._controllable_objects[key].resistance_coefficient * \
-                                                            self._controllable_objects[key].velocity ** 2 - self._controllable_objects[key].constant_resistance
-            if isinstance(self._controllable_objects[key], BicycleModelObject):
-                self.raw_input[key][self.time_index] = [self._controllable_objects[key].acceleration /
-                                                        self._controllable_objects[key].max_acceleration,
-                                                        self._controllable_objects[key].steering_angle /
-                                                        self._controllable_objects[key].max_steering_angle]
+            try:
+                self.net_accelerations[key][self.time_index] = self._controllable_objects[key].acceleration - self._controllable_objects[key].resistance_coefficient * \
+                                                               self._controllable_objects[key].velocity ** 2 - self._controllable_objects[key].constant_resistance
+            except AttributeError:
+                # no resistance in object
+                pass
+            if isinstance(self._controllable_objects[key], PedestrianObject):
+                self.raw_input[key][self.time_index] = [self._controllable_objects[key].long_acceleration / self._controllable_objects[key].max_long_acceleration,
+                                                        self._controllable_objects[key].lat_acceleration / self._controllable_objects[key].max_lat_acceleration,
+                                                        self._controllable_objects[key].angular_acceleration / self._controllable_objects[key].max_angular_acceleration]
                 self.headings[key][self.time_index] = self._controllable_objects[key].heading
-                self.steering_angles[key][self.time_index] = self._controllable_objects[key].steering_angle
             else:
                 self.raw_input[key][self.time_index] = (self._controllable_objects[key].acceleration /
                                                         self._controllable_objects[key].max_acceleration)

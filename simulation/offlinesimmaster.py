@@ -18,7 +18,7 @@ along with sidewalk-simulation.  If not, see <https://www.gnu.org/licenses/>.
 """
 import tqdm
 
-from agents import PedestrianCEIAgent
+from agents import PedestrianCEIAgentPedestrianDynamics
 from simulation.abstractsimmaster import AbstractSimMaster
 import numpy as np
 
@@ -41,7 +41,7 @@ class OfflineSimMaster(AbstractSimMaster):
         self._agents[key] = agent
         self.agent_types[key] = type(agent)
 
-        if type(agent) is PedestrianCEIAgent:
+        if type(agent) is PedestrianCEIAgentPedestrianDynamics:
             self.risk_bounds[key] = agent.risk_threshold
         else:
             self.risk_bounds[key] = None
@@ -71,8 +71,8 @@ class OfflineSimMaster(AbstractSimMaster):
             else:
                 controllable_object.set_continuous_input(agent.compute_continuous_input(self.dt / 1000.0))
 
-        # This for loop over agents is done twice because the models that compute the new input need the current state of other vehicles.
-        # So plan first for all vehicles before applying the accelerations and calculating the new state
+        # This for loop over agents is done twice because the models that compute the new input need the current state of other agents.
+        # So plan first for all agents before applying the accelerations and calculating the new state
         for controllable_object, agent in zip(self._controllable_objects.values(), self._agents.values()):
             controllable_object.update_model(self.dt / 1000.0)
 

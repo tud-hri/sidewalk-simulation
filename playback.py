@@ -20,9 +20,10 @@ import os
 import pickle
 import sys
 
+import numpy as np
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-from controllableobjects import BicycleModelObject
+from controllableobjects import PedestrianObject
 from simulation.playback_master import PlaybackMaster
 from simulation.simulationconstants import SimulationConstants
 from gui import SimulationGui
@@ -43,17 +44,15 @@ def playback(file_name):
     gui = SimulationGui(track, in_replay_mode=True, number_of_belief_points=len(playback_data['beliefs'][0][0]))
     sim_master = PlaybackMaster(gui, track, simulation_constants, playback_data)
 
-    first_bicycle_object = BicycleModelObject(initial_position=track.get_start_position(0),
-                                              wheelbase=0.5)
+    first_pedestrian_object =  PedestrianObject(initial_position=track.get_start_position(0), initial_heading=np.pi / 2.0)
 
-    second_bicycle_object = BicycleModelObject(initial_position=track.get_start_position(1),
-                                               wheelbase=0.5)
+    second_pedestrian_object =  PedestrianObject(initial_position=track.get_start_position(1), initial_heading=-np.pi / 2.0)
 
-    gui.add_controllable_dot(first_bicycle_object, color=QtGui.QColor(255, 127, 14))
-    sim_master.add_agent(0, first_bicycle_object)
+    gui.add_controllable_dot(first_pedestrian_object, color=QtGui.QColor(255, 127, 14))
+    sim_master.add_agent(0, first_pedestrian_object)
 
-    gui.add_controllable_dot(second_bicycle_object, color=QtGui.QColor(31, 119, 180))
-    sim_master.add_agent(1, second_bicycle_object)
+    gui.add_controllable_dot(second_pedestrian_object, color=QtGui.QColor(31, 119, 180))
+    sim_master.add_agent(1, second_pedestrian_object)
 
     gui.register_sim_master(sim_master)
     app.exec_()
@@ -61,7 +60,7 @@ def playback(file_name):
 
 if __name__ == '__main__':
     condition = 'symmetric'
-    iteration = '99'
+    iteration = '0'
 
     file = os.path.join('simulations', condition, iteration + '.pkl')
     playback(file)

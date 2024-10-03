@@ -1,5 +1,5 @@
 # Sidewalk Simulation
-This project contains the code accompanying the paper **"A Model of the Sidewalk Salsa"** by Olger Siebinga. This software was created to simulate the interactive behavior of two human human pedestrian approaching each other on a sidewalk. It includes code to execute the experiments, playback the gathered data, and plot and evaluate the data. The data that was gathered for the publication can be found [here](https://doi.org/10.4121/504bba81-c1fd-422a-ac21-e0dc9b8feed9.v1). This repository was tested with Python version 3.10
+This project contains the code accompanying the paper **"A Model of the Sidewalk Salsa"** by Olger Siebinga. This software was created to simulate the interactive behavior of two human pedestrians approaching each other on a sidewalk. It includes code to execute the experiments, playback the gathered data, and plot and evaluate the data. The data that was gathered for the publication can be found [here](https://doi.org/10.4121/504bba81-c1fd-422a-ac21-e0dc9b8feed9.v1). The version numbers of the datasets, correspond to the versions of the software. Version 1 uses bicycle dynamics while version 2 uses pedestrian dynamics. Version 2 corresponds to the data reported in the paper. This repository was tested with Python version 3.10
 
 
 ## Quick Start
@@ -16,7 +16,7 @@ The structure of this repository is based on the [`simple-merging-experiment`](h
 The `agents` module contains classes that can be used to provide input to the pedestrian. The name `agents` is derived from AI terminology, where every decision-maker is considered an agent. These agents can either provide continuous or discrete input to the controllable objects. In the simulation, continuous input is used. 
 
 ### Controllable Objects
-The `controllableobjects` module contains the dynamical models of controllable objects. In this simulation, only a bicycle model is used. This bicycle model can be controlled by continuous inputs (steering angle and acceleration). The bicycle object is subjected to a simplified resistance consisting of two parts, a constant term, and a velocity-dependent term. However, these are both set to 0.0 in this simulation. More information on this can be found in the comments in the class file. 
+The `controllableobjects` module contains the dynamical models of controllable objects. In this simulation, only a pedestrian model is used. This pedestrian model can be controlled by continuous inputs (accelerations).  
 
 ### GUI
 All files related to the graphical user interfaces are located in the GUI module. All GUI files are made with pyqt. There are a main GUI in the project; the `simulation_gui` is the user interface that is used when recorded data is played back. The GUI module also contains the worldview widget that is used to display the world. This should be self-explanatory. 
@@ -24,7 +24,7 @@ All files related to the graphical user interfaces are located in the GUI module
 ### Plotting
 The plotting module contains scripts that can provide insight into the recorded data. The file `plot_overview.py` loads all experiment data and was used to create the (box) plots that give an overview of the simulated behavior in all conditions. It can plot both metrics and raw signals (trajectories). It uses Pandas dataframes (loaded with the `load_data.py`script) containing all metrics and signals so it easy to modify to plot other signals.  
 
-The script `plot_single_trial.py` can be used to gain more insight into the bahavior of the pedestrians in a single simulated trial.
+The script `plot_single_trial.py` can be used to gain more insight into the behavior of the pedestrians in a single simulated trial.
 
 ### Simulation
 The simulation module contains two classes that are used when running the simulation. The simmasters take care of the clock. These classes contain the loop in which all update functions are called. The normal SimMaster class runs the simulations while the PlaybackMaster is used when replaying a recorded trial. The simmasters are also used for saving the experiment data. To initialize all data storage, the simmasters have a maximum run time. If this maximum time is exceeded, the simulation will automatically stop. 

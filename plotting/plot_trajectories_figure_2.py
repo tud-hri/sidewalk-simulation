@@ -25,14 +25,13 @@ import seaborn as sns
 import numpy as np
 
 if __name__ == '__main__':
-    file = os.path.join('..', 'data', 'simulations', 'symmetric', '65.pkl')
+    file = os.path.join('..', 'data', 'simulations', 'symmetric', '7.pkl')
 
     with open(file, 'rb') as f:
         loaded_data = pickle.load(f)
 
-    simulation_indices = [0, 70, 96, 101, 103, 104, 108]
-    times = [0.0, 3.5, 4.85, 5.05, 5.15, 5.20, 5.40]
-    strategy_switches = [0, 1, 1, 2]
+    simulation_indices = [0,  70,  73,  82,  86, 111]
+    times = [0.0, 3.5, 3.65, 4.1, 4.3, 5.50]
 
     plt.rcParams["font.family"] = "Century Gothic"
 
@@ -41,9 +40,8 @@ if __name__ == '__main__':
         position_trace_0 = np.array(loaded_data['positions'][0])[0:simulation_index + 1]
         position_trace_1 = np.array(loaded_data['positions'][1])[0:simulation_index + 1]
 
-        fig, ax = plt.subplots(1, 1, figsize=(4, 8))
+        fig, ax = plt.subplots(1, 1, figsize=(4, 8), frameon=False)
         ax.set_aspect('equal')
-        # ax.spines[:].set_visible(False)
 
         ax.plot(position_trace_0[:,0], position_trace_0[:,1], color='#ff7f0e')
         ax.plot(position_trace_1[:,0], position_trace_1[:,1], color='#1f77b4')
@@ -53,8 +51,11 @@ if __name__ == '__main__':
         ax.set_yticks([], [])
         ax.set_xticks([], [])
         ax.set_xlim((-1.25, 1.25))
-        # ax.set_ylim((0, 15))
 
         fig.tight_layout()
+
+        ax.set_axis_off()
+        extent = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+        # fig.savefig('trace_%d.png' % (axes_index + 1), dpi=350, bbox_inches=extent, transparent=True)
 
     plt.show()

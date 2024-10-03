@@ -18,16 +18,19 @@ along with sidewalk-simulation.  If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 
-from plotting.load_data import load_traces_data, load_metrics_data
+from plotting.load_data import load_traces_data, load_metrics_data, load_data_with_multi_processing
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 
 if __name__ == '__main__':
 
-    condition = 'different_risk_thresholds'
-    traces = load_traces_data(os.path.join('..', 'data', 'simulations', condition))
-    metrics = load_metrics_data(os.path.join('..', 'data', 'simulations', condition))
+    condition = 'symmetric'
+    traces, metrics = load_data_with_multi_processing(os.path.join('..', 'data', 'simulations', condition), workers=20)
+
+    fig, ax = plt.subplots(1, 1)
+    ax.set_aspect('equal')
+    sns.lineplot(traces, x='y', y='x', hue='iteration', units='id', estimator=None, ax=ax, sort=False)
 
     fig, ax = plt.subplots(1, 1)
     ax.set_aspect('equal')

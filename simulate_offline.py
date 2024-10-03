@@ -19,8 +19,8 @@ along with sidewalk-simulation.  If not, see <https://www.gnu.org/licenses/>.
 import os.path
 import multiprocessing as mp
 
-from agents import PedestrianCEIAgent
-from controllableobjects import BicycleModelObject
+from agents import PedestrianCEIAgentPedestrianDynamics
+from controllableobjects import PedestrianObject
 from simulation.offlinesimmaster import OfflineSimMaster
 from simulation.simulationconstants import SimulationConstants
 from trackobjects import SideWalk
@@ -28,12 +28,7 @@ from trackobjects import SideWalk
 import numpy as np
 
 
-def _simulate_trial(track, simulation_constants, iteration, cultural_biases, risk_thresholds, initial_positions,
-                    subfolder=''):
-    if subfolder:
-        folder = os.path.join('simulations', subfolder)
-    else:
-        folder = 'simulations'
+def simulate(track, simulation_constants, iteration, cultural_biases, risk_thresholds, initial_positions, folder):
     file_name = os.path.join(folder, '%d' % iteration)
 
     sim_master = OfflineSimMaster(track, simulation_constants, file_name, save_to_mat_and_csv=True, verbose=False)
@@ -42,48 +37,48 @@ def _simulate_trial(track, simulation_constants, iteration, cultural_biases, ris
     belief_frequency = 4
     preferred_velocity = 1.3
 
-    first_bicycle_object = BicycleModelObject(initial_position=initial_positions[0],
-                                              initial_velocity=preferred_velocity,
-                                              initial_heading=np.pi / 2.0,
-                                              wheelbase=0.1,
-                                              resistance_coefficient=0.,
-                                              constant_resistance=0.)
+    first_pedestrian_object = PedestrianObject(initial_position=initial_positions[0],
+                                               initial_velocity=np.array([preferred_velocity, 0.]),
+                                               initial_angular_velocity=0.0,
+                                               initial_heading=np.pi / 2.0,
+                                               max_lat_acceleration=1.,
+                                               max_angular_acceleration=np.pi)
 
-    second_bicycle_object = BicycleModelObject(initial_position=initial_positions[1],
-                                               initial_velocity=preferred_velocity,
-                                               initial_heading=-np.pi / 2.0,
-                                               wheelbase=0.1,
-                                               resistance_coefficient=0.,
-                                               constant_resistance=0.)
+    second_pedestrian_object = PedestrianObject(initial_position=initial_positions[1],
+                                                initial_velocity=np.array([preferred_velocity, 0.]),
+                                                initial_angular_velocity=0.0,
+                                                initial_heading=-np.pi / 2.0,
+                                                max_lat_acceleration=1.,
+                                                max_angular_acceleration=np.pi)
 
-    cei_agent_one = PedestrianCEIAgent(controllable_object=first_bicycle_object,
-                                       dt=simulation_constants.dt,
-                                       sim_master=sim_master,
-                                       track=track,
-                                       risk_threshold=risk_thresholds[0],
-                                       time_horizon=time_horizon,
-                                       planning_frequency=belief_frequency,
-                                       preferred_velocity=preferred_velocity,
-                                       preferred_heading=np.pi / 2,
-                                       comfortable_range=.3,
-                                       opponent_id=1,
-                                       cultural_bias=cultural_biases[0])
-    cei_agent_two = PedestrianCEIAgent(controllable_object=second_bicycle_object,
-                                       dt=simulation_constants.dt,
-                                       sim_master=sim_master,
-                                       track=track,
-                                       risk_threshold=risk_thresholds[1],
-                                       time_horizon=time_horizon,
-                                       planning_frequency=belief_frequency,
-                                       preferred_velocity=preferred_velocity,
-                                       preferred_heading=-np.pi / 2,
-                                       comfortable_range=.3,
-                                       opponent_id=0,
-                                       cultural_bias=cultural_biases[1]
-                                       )
+    cei_agent_one = PedestrianCEIAgentPedestrianDynamics(controllable_object=first_pedestrian_object,
+                                                         dt=simulation_constants.dt,
+                                                         sim_master=sim_master,
+                                                         track=track,
+                                                         risk_threshold=risk_thresholds[0],
+                                                         time_horizon=time_horizon,
+                                                         planning_frequency=belief_frequency,
+                                                         preferred_velocity=preferred_velocity,
+                                                         preferred_heading=np.pi / 2,
+                                                         comfortable_range=.3,
+                                                         opponent_id=1,
+                                                         cultural_bias=cultural_biases[0])
+    cei_agent_two = PedestrianCEIAgentPedestrianDynamics(controllable_object=second_pedestrian_object,
+                                                         dt=simulation_constants.dt,
+                                                         sim_master=sim_master,
+                                                         track=track,
+                                                         risk_threshold=risk_thresholds[1],
+                                                         time_horizon=time_horizon,
+                                                         planning_frequency=belief_frequency,
+                                                         preferred_velocity=preferred_velocity,
+                                                         preferred_heading=-np.pi / 2,
+                                                         comfortable_range=.3,
+                                                         opponent_id=0,
+                                                         cultural_bias=cultural_biases[1]
+                                                         )
 
-    sim_master.add_agent(0, first_bicycle_object, cei_agent_one)
-    sim_master.add_agent(1, second_bicycle_object, cei_agent_two)
+    sim_master.add_agent(0, first_pedestrian_object, cei_agent_one)
+    sim_master.add_agent(1, second_pedestrian_object, cei_agent_two)
 
     sim_master.start()
 
@@ -91,99 +86,57 @@ def _simulate_trial(track, simulation_constants, iteration, cultural_biases, ris
     print('simulation ended with exit status: ' + sim_master.end_state)
 
 
-def _simulate_scenario_with_multiprocessing(simulation_constants, track, iterations, cultural_biases, risk_thresholds,
-                                            initial_positions, condition_name):
-    os.makedirs(os.path.join('data', 'simulations', condition_name), exist_ok=True)
-
-    n = range(iterations)
-    args = zip([track] * iterations,
-               [simulation_constants] * iterations,
-               n,
-               [cultural_biases] * iterations,
-               [risk_thresholds] * iterations,
-               [initial_positions] * iterations,
-               [condition_name] * iterations
-               )
-
-    with mp.Pool(8) as p:
-        p.starmap(_simulate_trial, args)
-
-
-def simulate_symmetrical_scenario(simulation_constants, track, iterations=100):
-    cultural_biases = [1., 1.]
-    risk_thresholds = [0.6, 0.6]
-    initial_positions = [track.get_start_position(0),
-                         track.get_start_position(1)]
-    condition_name = 'symmetric'
-    _simulate_scenario_with_multiprocessing(simulation_constants, track, iterations, cultural_biases, risk_thresholds,
-                                            initial_positions, condition_name)
-
-
-def simulate_different_thresholds_scenario(simulation_constants, track, iterations=100):
-    cultural_biases = [1., 1.]
-    risk_thresholds = [0.5, 0.7]
-    initial_positions = [track.get_start_position(0),
-                         track.get_start_position(1)]
-    condition_name = 'different_risk_thresholds'
-    _simulate_scenario_with_multiprocessing(simulation_constants, track, iterations, cultural_biases, risk_thresholds,
-                                            initial_positions, condition_name)
-
-
-def simulate_different_sides_scenario(simulation_constants, track, iterations=100):
-    cultural_biases = [1., 1.]
-    risk_thresholds = [0.6, 0.6]
-    initial_positions = [track.get_start_position(0) + np.array([0.2, 0.0]),
-                         track.get_start_position(1) + np.array([-0.2, 0.0])]
-    condition_name = 'different_sides'
-    _simulate_scenario_with_multiprocessing(simulation_constants, track, iterations, cultural_biases, risk_thresholds,
-                                            initial_positions, condition_name)
-
-
-def simulate_same_belief_bias_scenario(simulation_constants, track, iterations=100):
-    cultural_biases = [1.2, 1.2]
-    risk_thresholds = [0.6, 0.6]
-    initial_positions = [track.get_start_position(0),
-                         track.get_start_position(1)]
-    condition_name = 'same_belief_bias'
-    _simulate_scenario_with_multiprocessing(simulation_constants, track, iterations, cultural_biases, risk_thresholds,
-                                            initial_positions, condition_name)
-
-
-def simulate_different_belief_bias_scenario(simulation_constants, track, iterations=100):
-    cultural_biases = [0.8, 1.2]
-    risk_thresholds = [0.6, 0.6]
-    initial_positions = [track.get_start_position(0),
-                         track.get_start_position(1)]
-    condition_name = 'different_belief_bias'
-    _simulate_scenario_with_multiprocessing(simulation_constants, track, iterations, cultural_biases, risk_thresholds,
-                                            initial_positions, condition_name)
-
-
 if __name__ == '__main__':
-    constants = SimulationConstants(dt=50,  # [ms]
-                                    sidewalk_width=2.5,  # [m]
-                                    sidewalk_length=15.,  # [m]
-                                    collision_tolerance=0.25,  # [m]
-                                    max_time=30e3)  # [ms]
+    simulation_constants = SimulationConstants(dt=50,
+                                               sidewalk_width=2.5,
+                                               sidewalk_length=15.,
+                                               collision_tolerance=0.25,
+                                               max_time=30e3)
 
-    sidewalk_track = SideWalk(constants)
+    track = SideWalk(simulation_constants)
+    iterations = 100
 
-    print("Simulating symmetrical scenario")
-    simulate_symmetrical_scenario(constants, sidewalk_track)
-    print("Symmetrical scenario done")
+    conditions = {
+        'symmetric': {'cultural_biases': [1., 1.],
+                      'risk_thresholds': [0.65, 0.65],
+                      'initial_positions': [track.get_start_position(0), track.get_start_position(1)]},
+        'different_belief_bias': {'cultural_biases': [0.7, 1.3],
+                                  'risk_thresholds': [0.65, 0.65],
+                                  'initial_positions': [track.get_start_position(0), track.get_start_position(1)]},
+        'same_belief_bias': {'cultural_biases': [0.7, 0.7],
+                             'risk_thresholds': [0.65, 0.65],
+                             'initial_positions': [track.get_start_position(0), track.get_start_position(1)]},
+        'different_sides': {'cultural_biases': [1., 1.],
+                            'risk_thresholds': [0.65, 0.65],
+                            'initial_positions': [track.get_start_position(0) + np.array([0.1, 0.0]),
+                                                  track.get_start_position(1) + np.array([-0.1, 0.0])]},
+        'different_risk_thresholds': {'cultural_biases': [1., 1.],
+                                            'risk_thresholds': [0.6, 0.7],
+                                            'initial_positions': [track.get_start_position(0), track.get_start_position(1)]}
+    }
 
-    print("Simulating different risk thresholds scenario")
-    simulate_different_thresholds_scenario(constants, sidewalk_track)
-    print("Different risk thresholds scenario done")
+    for key, value_dict in conditions.items():
+        cultural_biases = value_dict['cultural_biases']
+        risk_thresholds = value_dict['risk_thresholds']
+        initial_positions = value_dict['initial_positions']
 
-    print("Simulating different sides scenario")
-    simulate_different_sides_scenario(constants, sidewalk_track)
-    print("Different sides scenario done")
+        subfolder = key
+        folder = os.path.join('simulations', subfolder)
+        os.makedirs(os.path.join('data', folder), exist_ok=True)
 
-    print("Simulating same belief bias scenario")
-    simulate_same_belief_bias_scenario(constants, sidewalk_track)
-    print("Same belief bias scenario done")
+        n = range(iterations)
+        args = zip([track] * iterations,
+                   [simulation_constants] * iterations,
+                   n,
+                   [cultural_biases] * iterations,
+                   [risk_thresholds] * iterations,
+                   [initial_positions] * iterations,
+                   [folder] * iterations
+                   )
 
-    print("Simulating different belief bias scenario")
-    simulate_different_belief_bias_scenario(constants, sidewalk_track)
-    print("Different belief bias scenario done")
+        with mp.Pool(16) as p:
+            p.starmap(simulate, args)
+
+    # for i in range(3):
+    #     winsound.Beep(frequency=2000, duration=1000)
+    #     time.sleep(0.5)
